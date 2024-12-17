@@ -31,10 +31,6 @@ client.connect()
 // Endpoint to send the order
 app.post("/sendOrder", async (req, res) => {
     const tableNumber = String(req.query.table_num || req.body.tableNumber).trim();
-    console.log("Request Query Parameters:", req.query);
-    console.log("Request Body:", req.body);
-    console.log("Extracted Table Number:", tableNumber);
-
     const { dishes, tokenId } = req.body;
 
     if (!tableNumber || isNaN(tableNumber)) {
@@ -51,20 +47,19 @@ app.post("/sendOrder", async (req, res) => {
 
     try {
         const result = await db.collection('orders').insertOne(newOrder);
-        console.log("Order saved:", result);
         res.status(200).json({ message: "Order received successfully", tokenId, orderId: result.insertedId });
     } catch (error) {
-        console.error("Error storing order:", error);
         res.status(500).json({ error: "Error: " + error.message });
     }
 });
 
-
-
-
 // Endpoint to mark an order as delivered
 app.post("/markAsDelivered", async (req, res) => {
     const { orderId } = req.body;
+
+    if (!orderId) {
+        return res.status(400).json({ error: "Order ID is required" });
+    }
 
     try {
         const result = await db.collection('orders').updateOne(
@@ -73,12 +68,11 @@ app.post("/markAsDelivered", async (req, res) => {
         );
 
         if (result.matchedCount === 0) {
-            res.status(404).json({ error: "Order not found" });
-        } else {
-            res.status(200).json({ message: "Order marked as delivered successfully" });
+            return res.status(404).json({ error: "Order not found" });
         }
+
+        res.status(200).json({ message: "Order marked as delivered successfully" });
     } catch (error) {
-        console.error("Error marking order as delivered:", error);
         res.status(500).json({ error: "Error: " + error.message });
     }
 });
@@ -98,15 +92,75 @@ app.post("/reserveTable", async (req, res) => {
 
     try {
         const result = await db.collection('reservations').insertOne(reservation);
-        console.log(reservation);
         res.status(200).json({ message: "Reservation saved successfully", id: result.insertedId });
     } catch (error) {
-        console.error("Error saving reservation:", error);
         res.status(500).json({ error: "Error: " + error.message });
     }
 });
 
+// Get orders from the database
+app.get("/getOrders", async (req, res) => {
+    try {
+        const orders = await db.collection('orders').find({}).toArray();
+        res.status(200).json({ orders });
+    } catch (error) {
+        res.status(500).json({ error: "Error: " + error.message });
+    }
+});
 
+// Get reservations from the database
+app.get("/getReservations", async (req, res) => {
+    try {
+        const reservations = await db.collection('reservations').find({}).toArray();
+        res.status(200).json({ reservations });
+    } catch (error) {
+        res.status(500).json({ error: "Error: " + error.message });
+    }
+});
+
+// Server-Sent Events route for orders
+app.get('/streamOrders', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Function to send events to the client
+    const sendEvent = (change) => {
+        res.write(`data: ${JSON.stringify(change)}\n\n`);
+    };
+
+    // Listen to order changes and send to the client
+    const ordersChangeStream = db.collection('orders').watch();
+    ordersChangeStream.on('change', sendEvent);
+
+    // Cleanup on disconnect
+    req.on('close', () => {
+        ordersChangeStream.removeAllListeners('change');
+    });
+});
+
+// Server-Sent Events route for reservations
+app.get('/streamReservations', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Function to send events to the client
+    const sendEvent = (change) => {
+        res.write(`data: ${JSON.stringify(change)}\n\n`);
+    };
+
+    // Listen to reservation changes and send to the client
+    const reservationsChangeStream = db.collection('reservations').watch();
+    reservationsChangeStream.on('change', sendEvent);
+
+    // Cleanup on disconnect
+    req.on('close', () => {
+        reservationsChangeStream.removeAllListeners('change');
+    });
+});
+
+// Start server
 const PORT = 5000;
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
